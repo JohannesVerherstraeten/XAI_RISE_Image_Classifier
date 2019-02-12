@@ -119,6 +119,8 @@ def index_to_class_name(index):
 # == ACTUAL OBJECT DETECTION ==
 # =============================
 # Press q or close the image window to continue to the next image.
+#
+# The image- and label variables may be batches of images and labels. The batch size is defined in the DataLoader.
 for i, (image, label) in enumerate(testloader):
     print(" --- Image {} ---".format(i))
 
@@ -140,8 +142,10 @@ for i, (image, label) in enumerate(testloader):
     # Find the best prediction for each image in the batch
     max_value, max_index = torch.max(predictions, dim=1)
 
+    # Find the predicted class for each image in the batch.
     predicted_classes = [index_to_class_name(int(max_index[batch])) for batch in range(predictions.shape[0])]
 
     print("Prediction: {}".format(predicted_classes))
 
+    # make_grid joins a batch of images to one large image.
     imshow(torchvision.utils.make_grid(image))

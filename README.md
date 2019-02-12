@@ -14,7 +14,7 @@ Virtual environments in python are useful when you have multiple projects that e
 
 3. Follow the [pip installation guide of pytorch](https://pytorch.org/). Make sure you don’t install torchvision yet. 
 
-   I installed Stable -> Linux -> Pip -> python 3.7 -> No CUDA) which came down to 
+   I installed `Stable -> Linux -> Pip -> python 3.7 -> No CUDA` which came down to 
    ```
    $ pip3 install https://download.pytorch.org/whl/cpu/torch-1.0.1.post2-cp37-cp37m-linux_x86_64.whl
    ```
@@ -46,7 +46,7 @@ some time.
 # Setup without virtual environment
 1. Follow the [pip installation guide of pytorch](https://pytorch.org/). Make sure you don’t install torchvision yet.
 
-   I installed Stable -> Linux -> Pip -> python 3.7 -> No CUDA) which came down to 
+   I installed `Stable -> Linux -> Pip -> python 3.7 -> No CUDA` which came down to 
    ```
    $ pip3 install https://download.pytorch.org/whl/cpu/torch-1.0.1.post2-cp37-cp37m-linux_x86_64.whl
    ```

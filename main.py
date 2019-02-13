@@ -12,6 +12,7 @@ import torch
 import torch.utils.data
 import torch.autograd
 import torch.tensor
+import torch.cuda
 import torchvision
 import torchvision.datasets
 import torchvision.transforms as transforms
@@ -28,6 +29,9 @@ import copy
 
 horizontal_resolution = 10
 vertical_resolution = 10
+
+cuda = torch.cuda.is_available()
+print("CUDA available: {}".format(cuda))
 
 if __name__ == '__main__':
 
@@ -86,6 +90,8 @@ if __name__ == '__main__':
                          and callable(torchvision.models.__dict__[name]))
     print("Following models are available: {}".format(model_names))
     model = torchvision.models.resnet50(pretrained=True)
+    if cuda:
+        model = model.cuda()
     model.eval()
     print("Current model: {}".format(str(model.__class__)))
     print()
@@ -153,20 +159,14 @@ if __name__ == '__main__':
             return expected_class_index, cert
 
     def black_out(imgg, x_low, x_high, y_low, y_high):
-        for x in range(x_low, x_high+1):
-            for y in range(y_low, y_high+1):
-                imgg[0][0][x][y] = torch.zeros((1, 1))[0][0]
-                imgg[0][1][x][y] = torch.zeros((1, 1))[0][0]
-                imgg[0][2][x][y] = torch.zeros((1, 1))[0][0]
+        imgg[0, :, x_low:x_high+1, y_low:y_high+1] = 0.
         return imgg
 
 
     def highlight(imgggg, x_low, x_high, y_low, y_high, grad):
-        for x in range(x_low, x_high+1):
-            for y in range(y_low, y_high+1):
-                imgggg[0][0][x][y] = grad
-                imgggg[0][1][x][y] = 0
-                imgggg[0][2][x][y] = 0
+        imgggg[0, 0, x_low:x_high+1, y_low:y_high+1] = grad
+        imgggg[0, 1:, x_low:x_high + 1, y_low:y_high + 1] = 0
+
 
     # TODO: 'img'-naming!
 
@@ -178,6 +178,8 @@ if __name__ == '__main__':
     # The image- and label variables may be batches of images and labels. The batch size is defined in the DataLoader.
     for i, (image, label) in enumerate(testloader):
         print(" --- Image {} ---".format(i))
+        if cuda:
+            image = image.cuda()
 
         if image.shape[2] < 224 or image.shape[3] < 224:
             print(" -> Image too small, skipped.")
@@ -186,7 +188,7 @@ if __name__ == '__main__':
         # Original image
         most_likely_index, certainty = predict_class(image, None)
 
-        result_image = copy.deepcopy(image)
+        result_image = image.clone().detach()
 
         print("Image shape: {}".format(image.shape))
         for x_block in range(horizontal_resolution):
@@ -196,7 +198,7 @@ if __name__ == '__main__':
                 y_lower = int((image.shape[3] + 1) / vertical_resolution) * y_block
                 y_upper = int(((image.shape[3] + 1) / vertical_resolution)) * (y_block+1) - 1
 
-                img = copy.deepcopy(image)
+                img = image.clone().detach()
 
                 _, cert = predict_class(black_out(img, x_lower, x_upper, y_lower, y_upper), most_likely_index)
 

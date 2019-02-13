@@ -24,9 +24,9 @@ import requests
 import json
 from random import randint
 from progressbar import ProgressBar
+from random import random
 
 cuda = torch.cuda.is_available()
-print("CUDA available: {}".format(cuda))
 
 method = "boo"
 
@@ -34,7 +34,7 @@ method = "boo"
 horizontal_resolution = 10
 vertical_resolution = 10
 
-# bonr: Black Out n Randomly
+# bonr: Black Out Randomly
 nb_frames = 100
 black_out_ratio = 0.1
 # horizontal_resolution = 10
@@ -114,11 +114,13 @@ if __name__ == '__main__':
             img2.append(img[channel] * img_normalize_std[channel] + img_normalize_mean[channel])
         return torch.stack(img2)
 
-
     # Function to show an image
     def imshow(img):
         img = unnormalize(img)
-        npimg = img.numpy()
+        if cuda:
+            npimg = img.cpu().numpy()
+        else:
+            npimg = img.numpy()
         plt.imshow(np.transpose(npimg, (1, 2, 0)))  # different shape conventions between matplotlib and pytorch
         plt.show()
 
@@ -172,11 +174,11 @@ if __name__ == '__main__':
 
 
     def highlight(img, x_low, x_high, y_low, y_high, grad):
-        img[0, 0, x_low:x_high + 1, y_low:y_high + 1] = grad
-        img[0, 1:, x_low:x_high + 1, y_low:y_high + 1] = 0
+        img[0, 0, x_low:x_high + 1, y_low:y_high + 1] += grad
+        # img[0, 1:, x_low:x_high + 1, y_low:y_high + 1] = 0
 
 
-    def predict_blacked_out(image, blocks, res_img):
+    def predict_blacked_out(image, blocks, res_img, most_likely_index):
         img = image.clone().detach()
 
         for (x_block, y_block) in blocks:
@@ -204,8 +206,7 @@ if __name__ == '__main__':
     #
     # The image- and label variables may be batches of images and labels. The batch size is defined in the DataLoader.
     for i, (image, label) in enumerate(testloader):
-
-        print(label)
+        # print(label)
 
         print(" --- Image {} ---".format(i))
         if cuda:
@@ -218,7 +219,7 @@ if __name__ == '__main__':
         # Original image
         most_likely_index, certainty = predict_class(image, None)
 
-        result_image = image.clone().detach()
+        result_image = torch.zeros(image.shape)
 
         # print("Image shape: {}".format(image.shape))
 
@@ -226,20 +227,22 @@ if __name__ == '__main__':
             pbar = ProgressBar()
             for x_block in pbar(range(horizontal_resolution)):
                 for y_block in range(vertical_resolution):
-                    predict_blacked_out(image, [(x_block, y_block)], result_image)
+                    predict_blacked_out(image, [(x_block, y_block)], result_image, most_likely_index)
 
             imshow(torchvision.utils.make_grid(image))
             imshow(torchvision.utils.make_grid(result_image))
 
-        elif method == 'bonr':
+        elif method == 'bor':
             pbar = ProgressBar()
             for frame in pbar(range(nb_frames)):
                 blocks = []
-                for block in range(int(black_out_ratio*horizontal_resolution*vertical_resolution)):
+                for block in range(int(horizontal_resolution*vertical_resolution)):
+                    if random() > black_out_ratio:
+                        continue
                     x_block = randint(0, horizontal_resolution - 1)
                     y_block = randint(0, vertical_resolution - 1)
                     blocks.append((x_block, y_block))
-                predict_blacked_out(image, blocks, result_image)
+                predict_blacked_out(image, blocks, result_image, most_likely_index)
 
             imshow(torchvision.utils.make_grid(image))
             imshow(torchvision.utils.make_grid(result_image))

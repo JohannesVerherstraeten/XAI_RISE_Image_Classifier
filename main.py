@@ -26,12 +26,34 @@ import requests
 import json
 import copy
 
+from PIL import Image
+
 
 horizontal_resolution = 10
 vertical_resolution = 10
 
 cuda = torch.cuda.is_available()
 print("CUDA available: {}".format(cuda))
+
+
+class CustomDataset(torch.utils.data.dataset.Dataset):
+
+    def __init__(self, transform=None):
+        self.transform = transform
+        self.img_names = [os.path.join(os.getcwd(), "data/VOCselection/Figure_{}.png".format(nb)) for nb in range(16)]
+
+    def __getitem__(self, index):
+        imgg = Image.open(self.img_names[index]).convert('RGB')
+        target = 0      # dummy label
+
+        if self.transform is not None:
+            imgg = self.transform(imgg)
+
+        return imgg, target
+
+    def __len__(self):
+        return len(self.img_names)
+
 
 if __name__ == '__main__':
 
@@ -58,10 +80,14 @@ if __name__ == '__main__':
     # trainloader = torch.utils.data.DataLoader(trainset, batch_size=1,
     #                                           shuffle=True, num_workers=2)
 
-    testset = torchvision.datasets.VOCDetection(root='./data', year='2012', image_set="val",
-                                                download=download_voc_dataset, transform=transform)
-    testloader = torch.utils.data.DataLoader(testset, batch_size=1,
-                                             shuffle=False, num_workers=2)
+    # testset = torchvision.datasets.VOCDetection(root='./data', year='2012', image_set="val",
+    #                                             download=download_voc_dataset, transform=transform)
+    # testloader = torch.utils.data.DataLoader(testset, batch_size=1,
+    #                                          shuffle=False, num_workers=2)
+
+    customset = CustomDataset(transform=transform)
+    customloader = torch.utils.data.DataLoader(customset, batch_size=1, shuffle=False, num_workers=2)
+
     # (Actually, only one of these data loaders is used since the network doesn't have to be trained anymore.)
 
     # Download the ImageNet class index if not yet present. The class index is used to map indices to their
@@ -176,7 +202,7 @@ if __name__ == '__main__':
     # Press q or close the image window to continue to the next image.
     #
     # The image- and label variables may be batches of images and labels. The batch size is defined in the DataLoader.
-    for i, (image, label) in enumerate(testloader):
+    for i, (image, label) in enumerate(customloader):
         print(" --- Image {} ---".format(i))
         if cuda:
             image = image.cuda()
@@ -188,21 +214,21 @@ if __name__ == '__main__':
         # Original image
         most_likely_index, certainty = predict_class(image, None)
 
-        result_image = image.clone().detach()
-
-        print("Image shape: {}".format(image.shape))
-        for x_block in range(horizontal_resolution):
-            for y_block in range(vertical_resolution):
-                x_lower = int((image.shape[2]+1) / horizontal_resolution) * x_block
-                x_upper = int(((image.shape[2]+1) / horizontal_resolution)) * (x_block+1) - 1
-                y_lower = int((image.shape[3] + 1) / vertical_resolution) * y_block
-                y_upper = int(((image.shape[3] + 1) / vertical_resolution)) * (y_block+1) - 1
-
-                img = image.clone().detach()
-
-                _, cert = predict_class(black_out(img, x_lower, x_upper, y_lower, y_upper), most_likely_index)
-
-                highlight(result_image, x_lower, x_upper, y_lower, y_upper, certainty - cert)
+        # result_image = image.clone().detach()
+        #
+        # print("Image shape: {}".format(image.shape))
+        # for x_block in range(horizontal_resolution):
+        #     for y_block in range(vertical_resolution):
+        #         x_lower = int((image.shape[2]+1) / horizontal_resolution) * x_block
+        #         x_upper = int(((image.shape[2]+1) / horizontal_resolution)) * (x_block+1) - 1
+        #         y_lower = int((image.shape[3] + 1) / vertical_resolution) * y_block
+        #         y_upper = int(((image.shape[3] + 1) / vertical_resolution)) * (y_block+1) - 1
+        #
+        #         img = image.clone().detach()
+        #
+        #         _, cert = predict_class(black_out(img, x_lower, x_upper, y_lower, y_upper), most_likely_index)
+        #
+        #         highlight(result_image, x_lower, x_upper, y_lower, y_upper, certainty - cert)
 
         imshow(torchvision.utils.make_grid(image))
-        imshow(torchvision.utils.make_grid(result_image))
+        # imshow(torchvision.utils.make_grid(result_image))

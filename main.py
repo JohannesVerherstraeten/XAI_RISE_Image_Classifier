@@ -11,7 +11,6 @@ This code is based on:
 import torch
 import torch.utils.data
 import torch.autograd
-import torch.tensor
 import torch.cuda
 import torchvision.transforms as transforms
 import torchvision.models
@@ -24,23 +23,27 @@ import requests
 import json
 from random import randint
 from progressbar import ProgressBar
+from random import random
 
 from PIL import Image
 
 cuda = torch.cuda.is_available()
-print("CUDA available: {}".format(cuda))
 
-method = "boo"
+method = "rm"
 
 # boo: Black One Out
 horizontal_resolution = 10
 vertical_resolution = 10
 
-# bonr: Black Out n Randomly
+# bonr: Black Out Randomly
 nb_frames = 100
 black_out_ratio = 0.1
-# horizontal_resolution = 10
-# vertical_resolution = 10
+
+# rm: random masking
+nb_masks = 100
+mask_probability = 0.7
+mask_height_resolution = 50
+mask_width_resolution = 50
 
 
 class CustomDataset(torch.utils.data.dataset.Dataset):
@@ -60,6 +63,36 @@ class CustomDataset(torch.utils.data.dataset.Dataset):
 
     def __len__(self):
         return len(self.img_names)
+
+
+def generate_random_mask(height, width, height_res, width_res, mask_probability=0.4):
+    """
+    See RISE paper section 3.2
+
+    H = height
+    h = h
+    C_H = height_res
+
+    and analog for width.
+    """
+    h = height // height_res + 1  # +1 to round up
+    w = width // width_res + 1
+
+    # generate a (small) mask with random pixels
+    mask_small = np.random.random((h, w)) >= mask_probability
+    mask_small = np.array(mask_small, dtype=float)
+
+    # upsample the mask using binlinear interpolation (for smooth edges)
+    mask_small_img = Image.fromarray(mask_small)
+    mask_large_img = mask_small_img.resize(((w + 1) * width_res, (h + 1) * height_res), resample=Image.BILINEAR)
+    mask_large = np.array(mask_large_img)
+
+    # crop areas of size (height, width) with uniformly random indents in range(0, resolution)
+    offset = np.random.random(2) * np.array([height_res, width_res])
+    offset = np.array(offset, dtype=int)
+    height_offset, width_offset = offset
+    result = mask_large[height_offset:height + height_offset, width_offset:width + width_offset]
+    return torch.tensor(result)
 
 
 if __name__ == '__main__':
@@ -140,12 +173,23 @@ if __name__ == '__main__':
             img2.append(img[channel] * img_normalize_std[channel] + img_normalize_mean[channel])
         return torch.stack(img2)
 
-
     # Function to show an image
-    def imshow(img):
+    def imshow(img, map=None):
+
         img = unnormalize(img)
-        npimg = img.numpy()
-        plt.imshow(np.transpose(npimg, (1, 2, 0)))  # different shape conventions between matplotlib and pytorch
+
+        # scale map to range 0..1
+        if map is not None:
+            map_normalized = torch.zeros_like(map)
+            map_normalized[0] = map[0] / torch.max(map[0])
+        if map is None:
+            fig, ax1 = plt.subplots(1, 1, figsize=(15, 7))
+            ax1.imshow(np.transpose(img.cpu().numpy(), (1, 2, 0)))      # different shape conventions between matplotlib and pytorch
+        else:
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 7))
+            ax1.imshow(np.transpose(img.cpu().numpy(), (1, 2, 0)))
+            ax2.imshow(np.transpose(map_normalized.cpu().numpy(), (1, 2, 0)))
+
         plt.show()
 
 
@@ -178,17 +222,11 @@ if __name__ == '__main__':
             # print("Prediction: " + predicted_class + " with a certainty of " + str(max_value.item()))
             print("Prediction: " + predicted_class)
 
-            # make_grid joins a batch of images to one large image.
-            # imshow(torchvision.utils.make_grid(imggg))
-
             return class_index, max_value.item()
 
         else:
             cert = predictions[0][expected_class_index].item()
             # print("Certainty of " + str(cert))
-
-            # make_grid joins a batch of images to one large image.
-            # imshow(torchvision.utils.make_grid(imggg))
 
             return expected_class_index, cert
 
@@ -198,11 +236,11 @@ if __name__ == '__main__':
 
 
     def highlight(img, x_low, x_high, y_low, y_high, grad):
-        img[0, 0, x_low:x_high + 1, y_low:y_high + 1] = grad
-        img[0, 1:, x_low:x_high + 1, y_low:y_high + 1] = 0
+        img[0, 0, x_low:x_high + 1, y_low:y_high + 1] += grad
+        # img[0, 1:, x_low:x_high + 1, y_low:y_high + 1] = 0
 
 
-    def predict_blacked_out(image, blocks, res_img):
+    def predict_blacked_out(image, blocks, res_img, most_likely_index, certainty):
         img = image.clone().detach()
 
         for (x_block, y_block) in blocks:
@@ -221,7 +259,7 @@ if __name__ == '__main__':
             y_lower = int((image.shape[3] + 1) / vertical_resolution) * y_block
             y_upper = int(((image.shape[3] + 1) / vertical_resolution)) * (y_block + 1) - 1
 
-            highlight(res_img, x_lower, x_upper, y_lower, y_upper, certainty - cert)
+            highlight(res_img, x_lower, x_upper, y_lower, y_upper, max(certainty - cert, 0.))
 
     # =============================
     # == ACTUAL OBJECT DETECTION ==
@@ -242,50 +280,51 @@ if __name__ == '__main__':
         # Original image
         most_likely_index, certainty = predict_class(image, None)
 
-        # result_image = image.clone().detach()
-        #
-        # print("Image shape: {}".format(image.shape))
-        # for x_block in range(horizontal_resolution):
-        #     for y_block in range(vertical_resolution):
-        #         x_lower = int((image.shape[2]+1) / horizontal_resolution) * x_block
-        #         x_upper = int(((image.shape[2]+1) / horizontal_resolution)) * (x_block+1) - 1
-        #         y_lower = int((image.shape[3] + 1) / vertical_resolution) * y_block
-        #         y_upper = int(((image.shape[3] + 1) / vertical_resolution)) * (y_block+1) - 1
-        #
-        #         img = image.clone().detach()
-        #
-        #         _, cert = predict_class(black_out(img, x_lower, x_upper, y_lower, y_upper), most_likely_index)
-        #
-        #         highlight(result_image, x_lower, x_upper, y_lower, y_upper, certainty - cert)
-
-        imshow(torchvision.utils.make_grid(image))
-        # imshow(torchvision.utils.make_grid(result_image))
-
-        result_image = image.clone().detach()
-
-        # print("Image shape: {}".format(image.shape))
+        result_image = torch.zeros(image.shape)
 
         if method == 'boo':
             pbar = ProgressBar()
             for x_block in pbar(range(horizontal_resolution)):
                 for y_block in range(vertical_resolution):
-                    predict_blacked_out(image, [(x_block, y_block)], result_image)
+                    predict_blacked_out(image, [(x_block, y_block)], result_image, most_likely_index, certainty)
 
-            imshow(torchvision.utils.make_grid(image))
-            imshow(torchvision.utils.make_grid(result_image))
+            imshow(torchvision.utils.make_grid(image), torchvision.utils.make_grid(result_image))
 
         elif method == 'bonr':
             pbar = ProgressBar()
             for frame in pbar(range(nb_frames)):
                 blocks = []
-                for block in range(int(black_out_ratio*horizontal_resolution*vertical_resolution)):
+                for block in range(int(horizontal_resolution*vertical_resolution)):
+                    if random() > black_out_ratio:
+                        continue
                     x_block = randint(0, horizontal_resolution - 1)
                     y_block = randint(0, vertical_resolution - 1)
                     blocks.append((x_block, y_block))
-                predict_blacked_out(image, blocks, result_image)
+                predict_blacked_out(image, blocks, result_image, most_likely_index, certainty)
 
-            imshow(torchvision.utils.make_grid(image))
-            imshow(torchvision.utils.make_grid(result_image))
+            imshow(torchvision.utils.make_grid(image), torchvision.utils.make_grid(result_image))
 
+        elif method == "rm":
+            height, width = image.shape[2:]
+            pbar = ProgressBar()
+            for mask_idx in pbar(range(nb_masks)):
+
+                mask = generate_random_mask(height, width, mask_height_resolution, mask_width_resolution,
+                                            mask_probability)
+                mask_img = torch.stack(tuple([mask] * 3))[None, ...]    # reshape the mask to (1, 3, height, width)
+                img_masked = image * mask_img
+
+                # imshow(torchvision.utils.make_grid(img_masked))
+
+                _, mask_weight = predict_class(img_masked, most_likely_index)
+
+                result_image = result_image + (mask_img * mask_weight)
+                #
+                # print(mask_weight)
+                # print("max result value: {}".format(torch.max(result_image)))
+                #
+                # imshow(torchvision.utils.make_grid(img_masked), torchvision.utils.make_grid(result_image))
+
+            imshow(torchvision.utils.make_grid(image), torchvision.utils.make_grid(result_image))
         else:
             print("No method '" + method + "' available.")

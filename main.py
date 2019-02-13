@@ -13,8 +13,6 @@ import torch.utils.data
 import torch.autograd
 import torch.tensor
 import torch.cuda
-import torchvision
-import torchvision.datasets
 import torchvision.transforms as transforms
 import torchvision.models
 
@@ -24,14 +22,23 @@ import pprint
 import os
 import requests
 import json
-import copy
-
-
-horizontal_resolution = 10
-vertical_resolution = 10
+from random import randint
+from progressbar import ProgressBar
 
 cuda = torch.cuda.is_available()
 print("CUDA available: {}".format(cuda))
+
+method = "boo"
+
+# boo: Black One Out
+horizontal_resolution = 10
+vertical_resolution = 10
+
+# bonr: Black Out n Randomly
+nb_frames = 100
+black_out_ratio = 0.1
+# horizontal_resolution = 10
+# vertical_resolution = 10
 
 if __name__ == '__main__':
 
@@ -127,9 +134,9 @@ if __name__ == '__main__':
         return class_map[str(index)][1]
 
 
-    def predict_class(imggg, expected_class_index):
+    def predict_class(img, expected_class_index):
         # Send the image though the model to get the object prediction
-        predictions = model(torch.autograd.Variable(imggg))
+        predictions = model(torch.autograd.Variable(img))
         # predictions:
         # - Tensor of shape (batch_size, nb_of_classes)
         # - The class with the highest value is the predicted class
@@ -142,7 +149,8 @@ if __name__ == '__main__':
             # predicted_classes = [index_to_class_name(int(max_index[batch])) for batch in range(predictions.shape[0])]
             class_index = int(max_index[0])
             predicted_class = index_to_class_name(class_index)
-            print("Prediction: " + predicted_class + " with a certainty of " + str(max_value.item()))
+            # print("Prediction: " + predicted_class + " with a certainty of " + str(max_value.item()))
+            print("Prediction: " + predicted_class)
 
             # make_grid joins a batch of images to one large image.
             # imshow(torchvision.utils.make_grid(imggg))
@@ -151,24 +159,43 @@ if __name__ == '__main__':
 
         else:
             cert = predictions[0][expected_class_index].item()
-            print("Certainty of " + str(cert))
+            # print("Certainty of " + str(cert))
 
             # make_grid joins a batch of images to one large image.
             # imshow(torchvision.utils.make_grid(imggg))
 
             return expected_class_index, cert
 
-    def black_out(imgg, x_low, x_high, y_low, y_high):
-        imgg[0, :, x_low:x_high+1, y_low:y_high+1] = 0.
-        return imgg
+    def black_out(img, x_low, x_high, y_low, y_high):
+        img[0, :, x_low:x_high + 1, y_low:y_high + 1] = 0.
+        return img
 
 
-    def highlight(imgggg, x_low, x_high, y_low, y_high, grad):
-        imgggg[0, 0, x_low:x_high+1, y_low:y_high+1] = grad
-        imgggg[0, 1:, x_low:x_high + 1, y_low:y_high + 1] = 0
+    def highlight(img, x_low, x_high, y_low, y_high, grad):
+        img[0, 0, x_low:x_high + 1, y_low:y_high + 1] = grad
+        img[0, 1:, x_low:x_high + 1, y_low:y_high + 1] = 0
 
 
-    # TODO: 'img'-naming!
+    def predict_blacked_out(image, blocks, res_img):
+        img = image.clone().detach()
+
+        for (x_block, y_block) in blocks:
+            x_lower = int((image.shape[2] + 1) / horizontal_resolution) * x_block
+            x_upper = int(((image.shape[2] + 1) / horizontal_resolution)) * (x_block + 1) - 1
+            y_lower = int((image.shape[3] + 1) / vertical_resolution) * y_block
+            y_upper = int(((image.shape[3] + 1) / vertical_resolution)) * (y_block + 1) - 1
+
+            black_out(img, x_lower, x_upper, y_lower, y_upper)
+
+        _, cert = predict_class(img, most_likely_index)
+
+        for (x_block, y_block) in blocks:
+            x_lower = int((image.shape[2] + 1) / horizontal_resolution) * x_block
+            x_upper = int(((image.shape[2] + 1) / horizontal_resolution)) * (x_block + 1) - 1
+            y_lower = int((image.shape[3] + 1) / vertical_resolution) * y_block
+            y_upper = int(((image.shape[3] + 1) / vertical_resolution)) * (y_block + 1) - 1
+
+            highlight(res_img, x_lower, x_upper, y_lower, y_upper, certainty - cert)
 
     # =============================
     # == ACTUAL OBJECT DETECTION ==
@@ -177,6 +204,9 @@ if __name__ == '__main__':
     #
     # The image- and label variables may be batches of images and labels. The batch size is defined in the DataLoader.
     for i, (image, label) in enumerate(testloader):
+
+        print(label)
+
         print(" --- Image {} ---".format(i))
         if cuda:
             image = image.cuda()
@@ -190,19 +220,29 @@ if __name__ == '__main__':
 
         result_image = image.clone().detach()
 
-        print("Image shape: {}".format(image.shape))
-        for x_block in range(horizontal_resolution):
-            for y_block in range(vertical_resolution):
-                x_lower = int((image.shape[2]+1) / horizontal_resolution) * x_block
-                x_upper = int(((image.shape[2]+1) / horizontal_resolution)) * (x_block+1) - 1
-                y_lower = int((image.shape[3] + 1) / vertical_resolution) * y_block
-                y_upper = int(((image.shape[3] + 1) / vertical_resolution)) * (y_block+1) - 1
+        # print("Image shape: {}".format(image.shape))
 
-                img = image.clone().detach()
+        if method == 'boo':
+            pbar = ProgressBar()
+            for x_block in pbar(range(horizontal_resolution)):
+                for y_block in range(vertical_resolution):
+                    predict_blacked_out(image, [(x_block, y_block)], result_image)
 
-                _, cert = predict_class(black_out(img, x_lower, x_upper, y_lower, y_upper), most_likely_index)
+            imshow(torchvision.utils.make_grid(image))
+            imshow(torchvision.utils.make_grid(result_image))
 
-                highlight(result_image, x_lower, x_upper, y_lower, y_upper, certainty - cert)
+        elif method == 'bonr':
+            pbar = ProgressBar()
+            for frame in pbar(range(nb_frames)):
+                blocks = []
+                for block in range(int(black_out_ratio*horizontal_resolution*vertical_resolution)):
+                    x_block = randint(0, horizontal_resolution - 1)
+                    y_block = randint(0, vertical_resolution - 1)
+                    blocks.append((x_block, y_block))
+                predict_blacked_out(image, blocks, result_image)
 
-        imshow(torchvision.utils.make_grid(image))
-        imshow(torchvision.utils.make_grid(result_image))
+            imshow(torchvision.utils.make_grid(image))
+            imshow(torchvision.utils.make_grid(result_image))
+
+        else:
+            print("No method '" + method + "' available.")

@@ -88,9 +88,10 @@ class FullScreenImageViewer:
 
     def save_current_image(self, event=None):
         img_name = "Figure_{}.png".format(self.current_index)
-        img_path = os.path.join(os.path.join(os.getcwd(), "data/extracted"), img_name)
-        if not os.path.exists(img_path):
-            os.mkdir(img_path)
+        img_dir = os.path.join(os.getcwd(), "data/extracted")
+        img_path = os.path.join(img_dir, img_name)
+        if not os.path.exists(img_dir):
+            os.mkdir(img_dir)
         image_bgr = cv2.cvtColor(self.current_image, cv2.COLOR_RGB2BGR)
         cv2.imwrite(img_path, image_bgr)
         print("saved as {}".format(img_name))

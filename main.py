@@ -40,10 +40,9 @@ nb_frames = 100
 black_out_ratio = 0.1
 
 # rm: random masking
-nb_masks = 100
-mask_probability = 0.7
-mask_height_resolution = 50
-mask_width_resolution = 50
+nb_masks = 50
+mask_probability = 0.9
+mask_max_resolution = 10
 
 
 class CustomDataset(torch.utils.data.dataset.Dataset):
@@ -70,25 +69,26 @@ def generate_random_mask(height, width, height_res, width_res, mask_probability=
     See RISE paper section 3.2
 
     H = height
-    h = h
-    C_H = height_res
+    h = height_res
+    C_H = height_scale
 
     and analog for width.
     """
-    h = height // height_res + 1  # +1 to round up
-    w = width // width_res + 1
+    height_scale = height // height_res + 1
+    width_scale = width // width_res + 1
 
     # generate a (small) mask with random pixels
-    mask_small = np.random.random((h, w)) >= mask_probability
+    mask_small = np.random.random((height_res, width_res)) >= mask_probability
     mask_small = np.array(mask_small, dtype=float)
 
     # upsample the mask using binlinear interpolation (for smooth edges)
     mask_small_img = Image.fromarray(mask_small)
-    mask_large_img = mask_small_img.resize(((w + 1) * width_res, (h + 1) * height_res), resample=Image.BILINEAR)
+    mask_large_img = mask_small_img.resize(((width_res + 1) * width_scale, (height_res + 1) * height_scale),
+                                           resample=Image.BILINEAR)
     mask_large = np.array(mask_large_img)
 
     # crop areas of size (height, width) with uniformly random indents in range(0, resolution)
-    offset = np.random.random(2) * np.array([height_res, width_res])
+    offset = np.random.random(2) * np.array([height_scale, width_scale])
     offset = np.array(offset, dtype=int)
     height_offset, width_offset = offset
     result = mask_large[height_offset:height + height_offset, width_offset:width + width_offset]
@@ -178,16 +178,16 @@ if __name__ == '__main__':
 
         img = unnormalize(img)
 
-        # scale map to range 0..1
-        if map is not None:
-            map_normalized = torch.zeros_like(map)
-            map_normalized[0] = map[0] / torch.max(map[0])
         if map is None:
             fig, ax1 = plt.subplots(1, 1, figsize=(15, 7))
             ax1.imshow(np.transpose(img.cpu().numpy(), (1, 2, 0)))      # different shape conventions between matplotlib and pytorch
         else:
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 7))
             ax1.imshow(np.transpose(img.cpu().numpy(), (1, 2, 0)))
+
+            map_normalized = torch.zeros_like(map)
+            map_normalized[0] = (map[0] - torch.min(map[0])) / (torch.max(map[0]) - torch.min(map[0]))
+            # map_normalized = map / 50.
             ax2.imshow(np.transpose(map_normalized.cpu().numpy(), (1, 2, 0)))
 
         plt.show()
@@ -307,23 +307,30 @@ if __name__ == '__main__':
         elif method == "rm":
             height, width = image.shape[2:]
             pbar = ProgressBar()
-            for mask_idx in pbar(range(nb_masks)):
 
-                mask = generate_random_mask(height, width, mask_height_resolution, mask_width_resolution,
-                                            mask_probability)
-                mask_img = torch.stack(tuple([mask] * 3))[None, ...]    # reshape the mask to (1, 3, height, width)
-                img_masked = image * mask_img
+            for resolution in pbar(range(2, mask_max_resolution)):
 
-                # imshow(torchvision.utils.make_grid(img_masked))
+                print(resolution)
 
-                _, mask_weight = predict_class(img_masked, most_likely_index)
+                mask_height_resolution = mask_width_resolution = resolution
 
-                result_image = result_image + (mask_img * mask_weight)
-                #
-                # print(mask_weight)
-                # print("max result value: {}".format(torch.max(result_image)))
-                #
-                # imshow(torchvision.utils.make_grid(img_masked), torchvision.utils.make_grid(result_image))
+                for mask_idx in range(nb_masks):
+
+                    mask = generate_random_mask(height, width, mask_height_resolution, mask_width_resolution,
+                                                mask_probability)
+                    mask_img = torch.stack(tuple([mask] * 3))[None, ...]    # reshape the mask to (1, 3, height, width)
+                    img_masked = image * mask_img
+
+                    # imshow(torchvision.utils.make_grid(img_masked))
+
+                    _, mask_weight = predict_class(img_masked, most_likely_index)
+
+                    result_image = result_image + (mask_img * mask_weight)
+
+                    # print(mask_weight)
+                    # print("max result value: {}".format(torch.max(result_image)))
+                    #
+                    # imshow(torchvision.utils.make_grid(img_masked), torchvision.utils.make_grid(result_image))
 
             imshow(torchvision.utils.make_grid(image), torchvision.utils.make_grid(result_image))
         else:

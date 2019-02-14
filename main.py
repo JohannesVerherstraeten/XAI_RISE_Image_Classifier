@@ -49,7 +49,7 @@ class CustomDataset(torch.utils.data.dataset.Dataset):
 
     def __init__(self, transform=None):
         self.transform = transform
-        self.img_names = [os.path.join(os.getcwd(), "data/VOCselection/Figure_{}.png".format(nb)) for nb in range(16)]
+        self.img_names = self.get_files(os.path.join(os.getcwd(), "data/VOCselection/"), lambda x: x.endswith(".png"))
 
     def __getitem__(self, index):
         imgg = Image.open(self.img_names[index]).convert('RGB')
@@ -62,6 +62,27 @@ class CustomDataset(torch.utils.data.dataset.Dataset):
 
     def __len__(self):
         return len(self.img_names)
+
+    def get_files(self, folder, name_filter=None):
+        """
+        Helper function that returns the list of files in a specified folder.
+        """
+        if not os.path.isdir(folder):
+            raise RuntimeError("\"{0}\" is not a directory. Please create the directory and put images in it".format(folder))
+
+        filtered_files = []
+
+        # Explore the directory tree to get files.
+        for path, _, files in os.walk(folder):
+            files.sort()
+            for file in files:
+                if name_filter is not None and not name_filter(file):
+                    continue
+                else:
+                    full_path = os.path.join(path, file)
+                    filtered_files.append(full_path)
+
+        return filtered_files
 
 
 def generate_random_mask(height, width, height_res, width_res, mask_probability=0.4):

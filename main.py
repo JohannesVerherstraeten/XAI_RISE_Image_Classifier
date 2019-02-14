@@ -42,7 +42,7 @@ black_out_ratio = 0.1
 # rm: random masking
 nb_masks = 50
 mask_probability = 0.9
-mask_max_resolution = 10
+mask_max_resolution = 15
 
 
 class CustomDataset(torch.utils.data.dataset.Dataset):
@@ -50,6 +50,7 @@ class CustomDataset(torch.utils.data.dataset.Dataset):
     def __init__(self, transform=None):
         self.transform = transform
         self.img_names = self.get_files(os.path.join(os.getcwd(), "data/VOCselection/"), lambda x: x.endswith(".png"))
+        print(self.img_names)
 
     def __getitem__(self, index):
         imgg = Image.open(self.img_names[index]).convert('RGB')
@@ -74,7 +75,7 @@ class CustomDataset(torch.utils.data.dataset.Dataset):
 
         # Explore the directory tree to get files.
         for path, _, files in os.walk(folder):
-            files.sort()
+            # files.sort()
             for file in files:
                 if name_filter is not None and not name_filter(file):
                     continue
@@ -85,7 +86,7 @@ class CustomDataset(torch.utils.data.dataset.Dataset):
         return filtered_files
 
 
-def generate_random_mask(height, width, height_res, width_res, mask_probability=0.4):
+def generate_random_mask(height, width, height_res, width_res, mask_probability=0.8):
     """
     See RISE paper section 3.2
 
@@ -98,8 +99,13 @@ def generate_random_mask(height, width, height_res, width_res, mask_probability=
     height_scale = height // height_res + 1
     width_scale = width // width_res + 1
 
-    # generate a (small) mask with random pixels
-    mask_small = np.random.random((height_res, width_res)) >= mask_probability
+    # generate a small (non-empty) mask with random pixels
+    while True:
+        mask_small = np.random.random((height_res, width_res)) >= mask_probability
+        if np.any(mask_small):
+            break
+        else:
+            continue
     mask_small = np.array(mask_small, dtype=float)
 
     # upsample the mask using binlinear interpolation (for smooth edges)

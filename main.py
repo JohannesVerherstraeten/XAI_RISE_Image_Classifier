@@ -108,12 +108,7 @@ def generate_random_mask(height, width, height_res, width_res, mask_probability=
     width_scale = width // width_res + 1
 
     # generate a small (non-empty) mask with random pixels
-    while True:
-        mask_small = np.random.random((height_res, width_res)) >= mask_probability
-        if np.any(mask_small):
-            break
-        else:
-            continue
+    mask_small = np.random.random((height_res, width_res)) >= mask_probability
     mask_small = np.array(mask_small, dtype=float)
 
     # upsample the mask using binlinear interpolation (for smooth edges)
@@ -347,6 +342,9 @@ if __name__ == '__main__':
 
                     mask = generate_random_mask(height, width, mask_height_resolution, mask_width_resolution,
                                                 mask_probability)
+                    # skip completely black masks! this will occur more with small resolutions, but that is intentional!
+                    if torch.max(mask).item() == 0.:
+                        continue
                     mask_img = torch.stack(tuple([mask] * 3))[None, ...]    # reshape the mask to (1, 3, height, width)
                     img_masked = image * mask_img
 

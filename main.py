@@ -29,6 +29,12 @@ from PIL import Image
 
 cuda = torch.cuda.is_available()
 
+# Data directories and files. Will be created later on if not yet present.
+voc_dataset_dir = os.path.join(os.getcwd(), "data/VOCdevkit")
+voc_selection_dir = os.path.join(os.getcwd(), "data/VOCselection/")
+imagenet_index_file = os.path.join(os.getcwd(), "data/imagenet_class_index.json")
+
+# XAI method to use:
 method = "rm"
 
 # boo: Black One Out
@@ -42,14 +48,16 @@ black_out_ratio = 0.1
 # rm: random masking
 nb_masks = 50
 mask_probability = 0.9
-mask_max_resolution = 15
+mask_max_resolution = 10
 
 
 class CustomDataset(torch.utils.data.dataset.Dataset):
-
-    def __init__(self, transform=None):
+    """
+    Dataset for loading images from a separate user-defined folder.
+    """
+    def __init__(self, folder, transform=None):
         self.transform = transform
-        self.img_names = self.get_files(os.path.join(os.getcwd(), "data/VOCselection/"), lambda x: x.endswith(".png"))
+        self.img_names = self.get_files(folder, lambda x: x.endswith(".png"))
         print(self.img_names)
 
     def __getitem__(self, index):
@@ -127,10 +135,6 @@ if __name__ == '__main__':
     # ==========
     # == DATA ==
     # ==========
-    # Data directories and files. Will be created later on if not yet present.
-    voc_dataset_dir = os.path.join(os.getcwd(), "data/VOCdevkit")
-    imagenet_index_file = os.path.join(os.getcwd(), "data/imagenet_class_index.json")
-
     # Download the image dataset if not yet present, and create the data loaders for it.
     # Images must be transformed according to https://pytorch.org/docs/stable/torchvision/models.html
     download_voc_dataset = not os.path.exists(voc_dataset_dir)
@@ -152,10 +156,8 @@ if __name__ == '__main__':
     # testloader = torch.utils.data.DataLoader(testset, batch_size=1,
     #                                          shuffle=False, num_workers=2)
 
-    customset = CustomDataset(transform=transform)
+    customset = CustomDataset(voc_selection_dir, transform=transform)
     customloader = torch.utils.data.DataLoader(customset, batch_size=1, shuffle=False, num_workers=2)
-
-    # (Actually, only one of these data loaders is used since the network doesn't have to be trained anymore.)
 
     # Download the ImageNet class index if not yet present. The class index is used to map indices to their
     # corresponding class name.
@@ -173,7 +175,6 @@ if __name__ == '__main__':
     #    "2": ["n01484850", "great_white_shark"],
     #    ...}
 
-
     # ===========
     # == MODEL ==
     # ===========
@@ -188,7 +189,6 @@ if __name__ == '__main__':
     model.eval()
     print("Current model: {}".format(str(model.__class__)))
     print()
-
 
     # ===============
     # == UTILITIES ==
@@ -334,13 +334,15 @@ if __name__ == '__main__':
         elif method == "rm":
             height, width = image.shape[2:]
             pbar = ProgressBar()
-
+            
+            # Create masks with multiple resolutions
             for resolution in pbar(range(2, mask_max_resolution)):
 
                 print(resolution)
 
                 mask_height_resolution = mask_width_resolution = resolution
 
+                # For each resolution, create multiple masks
                 for mask_idx in range(nb_masks):
 
                     mask = generate_random_mask(height, width, mask_height_resolution, mask_width_resolution,

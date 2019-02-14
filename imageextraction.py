@@ -5,7 +5,7 @@ This script shows all images in the VOC dataset one at a time.
 
 Press q or Escape to exit,
 press Enter or right arrow to continue to next image,
-press s to extract the current image from the dataset and save it in ...,
+press s to extract the current image from the dataset and save it in data/extracted/,
 press F11 to toggle fullscreen mode.
 """
 

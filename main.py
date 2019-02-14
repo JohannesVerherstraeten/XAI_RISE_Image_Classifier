@@ -303,6 +303,8 @@ if __name__ == '__main__':
         most_likely_index, certainty = predict_class(image, None)
 
         result_image = torch.zeros(image.shape)
+        if cuda:
+            result_image = result_image.cuda()
 
         if method == 'boo':
             pbar = ProgressBar()
@@ -346,6 +348,8 @@ if __name__ == '__main__':
                     if torch.max(mask).item() == 0.:
                         continue
                     mask_img = torch.stack(tuple([mask] * 3))[None, ...]    # reshape the mask to (1, 3, height, width)
+                    if cuda:
+                        mask_img = mask_img.cuda()
                     img_masked = image * mask_img
 
                     # imshow(torchvision.utils.make_grid(img_masked))

@@ -335,7 +335,7 @@ if __name__ == '__main__':
             # Create masks with multiple resolutions
             for resolution in pbar(range(2, mask_max_resolution)):
 
-                print(resolution)
+                # print(resolution)
 
                 mask_height_resolution = mask_width_resolution = resolution
 

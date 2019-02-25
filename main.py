@@ -12,6 +12,7 @@ import torch
 import torch.utils.data
 import torch.autograd
 import torch.cuda
+import torch.nn
 import torchvision.transforms as transforms
 import torchvision.models
 
@@ -46,9 +47,9 @@ nb_frames = 100
 black_out_ratio = 0.1
 
 # rm: random masking
-nb_masks = 50
+nb_masks = 200
 mask_probability = 0.9
-mask_max_resolution = 10
+mask_max_resolution = 15
 
 
 class CustomDataset(torch.utils.data.dataset.Dataset):
@@ -229,6 +230,7 @@ if __name__ == '__main__':
     def predict_class(img, expected_class_index):
         # Send the image though the model to get the object prediction
         predictions = model(torch.autograd.Variable(img))
+        predictions = torch.nn.Softmax(dim=1)(predictions)
         # predictions:
         # - Tensor of shape (batch_size, nb_of_classes)
         # - The class with the highest value is the predicted class
@@ -282,6 +284,27 @@ if __name__ == '__main__':
             y_upper = int(((image.shape[3] + 1) / vertical_resolution)) * (y_block + 1) - 1
 
             highlight(res_img, x_lower, x_upper, y_lower, y_upper, max(certainty - cert, 0.))
+
+
+    def evaluate_explanation(image: torch.Tensor, explanation: torch.Tensor, resolution=1000):
+        image_copy = torch.tensor(image)
+        explanation_np: np.ndarray = explanation.cpu().numpy()
+        indices = np.unravel_index(np.argsort(-explanation_np[0][0], axis=None), explanation_np.shape[2:])
+
+        sorted_x, sorted_y = indices
+
+        scores = []
+
+        pbar = ProgressBar()
+        for i in pbar(range(len(sorted_x) // resolution + 1)):
+            image_copy[0, 0:3, sorted_x[i*resolution:(i + 1)*resolution], sorted_y[i*resolution:(i + 1)*resolution]] = 0.
+            # imshow(torchvision.utils.make_grid(image_copy))
+            _, score = predict_class(image_copy, most_likely_index)
+            # print(score)
+            scores.append(score)
+
+        plt.plot(np.array(scores))
+        plt.show()
 
     # =============================
     # == ACTUAL OBJECT DETECTION ==
@@ -364,5 +387,8 @@ if __name__ == '__main__':
                     # imshow(torchvision.utils.make_grid(img_masked), torchvision.utils.make_grid(result_image))
 
             imshow(torchvision.utils.make_grid(image), torchvision.utils.make_grid(result_image))
+
+            evaluate_explanation(image, result_image)
+
         else:
             print("No method '" + method + "' available.")

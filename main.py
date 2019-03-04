@@ -128,9 +128,6 @@ def generate_random_mask(height, width, height_res, width_res, mask_probability=
     return torch.tensor(result)
 
 
-# ===============
-# == UTILITIES ==
-# ===============
 # Opposite of transforms.Normalize
 def unnormalize(img):
     img2 = []
@@ -140,12 +137,9 @@ def unnormalize(img):
 
 
 # Function to show an image
-def imshow(img, map=None, do_unnormalize=True):
+def imshow(img, map=None):
 
-    if do_unnormalize:
-        img = unnormalize(img)
-
-    print("{} - {}".format(torch.min(img), torch.max(img)))
+    img = unnormalize(img)
 
     if map is None:
         fig, ax1 = plt.subplots(1, 1, figsize=(15, 7))
@@ -176,6 +170,7 @@ def index_to_class_name(index):
 def predict_class(img, expected_class_index):
     # Send the image though the model to get the object prediction
     predictions = model(torch.autograd.Variable(img))
+    predictions = torch.nn.Softmax(dim=1)(predictions)
     # predictions:
     # - Tensor of shape (batch_size, nb_of_classes)
     # - The class with the highest value is the predicted class
@@ -183,16 +178,6 @@ def predict_class(img, expected_class_index):
     if expected_class_index is None:
         # Find the best prediction for each image in the batch
         max_value, max_index = torch.max(predictions, dim=1)
-
-        order = torch.argsort(predictions[0])
-
-        print("Prediction: ")
-        for ii in range(order.shape[0]-1, order.shape[0]-6, -1):
-            class_index_i = int(order[ii])
-            probability_i = torch.nn.Softmax(dim=1)(predictions)[0, class_index_i]
-            class_i = index_to_class_name(class_index_i)
-            print("- '{}' with probability {:.3f}".format(class_i, probability_i))
-
 
         # Find the predicted class for each image in the batch.
         # predicted_classes = [index_to_class_name(int(max_index[batch])) for batch in range(predictions.shape[0])]
@@ -322,6 +307,26 @@ if __name__ == '__main__':
     print()
 
 
+    def evaluate_explanation(image: torch.Tensor, explanation: torch.Tensor, resolution=1000):
+        image_copy = torch.tensor(image)
+        explanation_np: np.ndarray = explanation.cpu().numpy()
+        indices = np.unravel_index(np.argsort(-explanation_np[0][0], axis=None), explanation_np.shape[2:])
+
+        sorted_x, sorted_y = indices
+
+        scores = []
+
+        pbar = ProgressBar()
+        for i in pbar(range(len(sorted_x) // resolution + 1)):
+            image_copy[0, 0:3, sorted_x[i*resolution:(i + 1)*resolution], sorted_y[i*resolution:(i + 1)*resolution]] = 0.
+            # imshow(torchvision.utils.make_grid(image_copy))
+            _, score = predict_class(image_copy, most_likely_index)
+            # print(score)
+            scores.append(score)
+
+        plt.plot(np.array(scores))
+        plt.show()
+
     # =============================
     # == ACTUAL OBJECT DETECTION ==
     # =============================
@@ -376,7 +381,7 @@ if __name__ == '__main__':
             # Create masks with multiple resolutions
             for resolution in pbar(range(2, mask_max_resolution)):
 
-                print(resolution)
+                # print(resolution)
 
                 mask_height_resolution = mask_width_resolution = resolution
 
@@ -395,7 +400,7 @@ if __name__ == '__main__':
 
                     _, mask_weight = predict_class(img_masked, most_likely_index)
 
-                    print("weight: {}".format(mask_weight))
+                    # print("weight: {}".format(mask_weight))
                     # imshow(torchvision.utils.make_grid(mask_img), do_unnormalize=False)
                     #
                     # imshow(torchvision.utils.make_grid(img_masked))
@@ -408,6 +413,7 @@ if __name__ == '__main__':
                     # imshow(torchvision.utils.make_grid(img_masked), torchvision.utils.make_grid(result_image))
 
             imshow(torchvision.utils.make_grid(image), torchvision.utils.make_grid(result_image))
+
             evaluate_explanation(image, result_image)
         else:
             print("No method '" + method + "' available.")

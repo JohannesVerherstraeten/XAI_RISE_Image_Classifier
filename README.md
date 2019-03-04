@@ -1,3 +1,5 @@
+Note: this code is a quick proof of concept.
+
 # Pytorch classifier setup
 ## Setup using a new virtual environment
 Virtual environments in python are useful when you have multiple projects that each require different versions of the same packages. If you create a new virtual environment for a project, installations of packages in this environment will not be seen by other projects. In my case this was useful for installing multiple versions of the torchvision package. 

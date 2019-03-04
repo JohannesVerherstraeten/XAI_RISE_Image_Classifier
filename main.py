@@ -3,15 +3,18 @@ This script feeds images from the VOC Pascal 2012 dataset to a convolutional neu
 The network is pretrained on the ImageNet ILSVRC dataset, which contains 1000 different object classes.
 For each image in the VOC dataset, the network predicts the object class that is most apparent in the image.
 
-This code is based on:
-- https://github.com/pytorch/examples/blob/master/imagenet/main.py
-- https://heartbeat.fritz.ai/basics-of-image-classification-with-pytorch-2f8973c51864
+An explanation of the prediction is visualized with a heatmap, where the brightest regions are most important.
+This explanation is generated using the RISE algorithm:
+http://bmvc2018.org/contents/papers/1064.pdf
+
+This code is not cleaned up, more a proof of concept.
 """
 
 import torch
 import torch.utils.data
 import torch.autograd
 import torch.cuda
+import torch.nn
 import torchvision.transforms as transforms
 import torchvision.models
 
@@ -46,9 +49,9 @@ nb_frames = 100
 black_out_ratio = 0.1
 
 # rm: random masking
-nb_masks = 50
+nb_masks = 200
 mask_probability = 0.9
-mask_max_resolution = 10
+mask_max_resolution = 15
 
 
 class CustomDataset(torch.utils.data.dataset.Dataset):
@@ -125,6 +128,139 @@ def generate_random_mask(height, width, height_res, width_res, mask_probability=
     return torch.tensor(result)
 
 
+# ===============
+# == UTILITIES ==
+# ===============
+# Opposite of transforms.Normalize
+def unnormalize(img):
+    img2 = []
+    for channel in range(img.shape[0]):
+        img2.append(img[channel] * img_normalize_std[channel] + img_normalize_mean[channel])
+    return torch.stack(img2)
+
+
+# Function to show an image
+def imshow(img, map=None, do_unnormalize=True):
+
+    if do_unnormalize:
+        img = unnormalize(img)
+
+    print("{} - {}".format(torch.min(img), torch.max(img)))
+
+    if map is None:
+        fig, ax1 = plt.subplots(1, 1, figsize=(15, 7))
+        ax1.imshow(np.transpose(img.cpu().numpy(), (1, 2, 0)))      # different shape conventions between matplotlib and pytorch
+    else:
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 7))
+        ax1.imshow(np.transpose(img.cpu().numpy(), (1, 2, 0)))
+
+        map_normalized = torch.zeros_like(map)
+        map_normalized[0] = (map[0] - torch.min(map[0])) / (torch.max(map[0]) - torch.min(map[0]))
+        # map_normalized = map / 50.
+        ax2.imshow(np.transpose(map_normalized.cpu().numpy(), (1, 2, 0)))
+
+    plt.show()
+
+
+# Function to pretty print a (json) dictionary
+pp = pprint.PrettyPrinter(indent=4)
+def pprintdict(dic):
+    pp.pprint(dic)
+
+
+# Function to map an index to its corresponding object class name
+def index_to_class_name(index):
+    return class_map[str(index)][1]
+
+
+def predict_class(img, expected_class_index):
+    # Send the image though the model to get the object prediction
+    predictions = model(torch.autograd.Variable(img))
+    # predictions:
+    # - Tensor of shape (batch_size, nb_of_classes)
+    # - The class with the highest value is the predicted class
+
+    if expected_class_index is None:
+        # Find the best prediction for each image in the batch
+        max_value, max_index = torch.max(predictions, dim=1)
+
+        order = torch.argsort(predictions[0])
+
+        print("Prediction: ")
+        for ii in range(order.shape[0]-1, order.shape[0]-6, -1):
+            class_index_i = int(order[ii])
+            probability_i = torch.nn.Softmax(dim=1)(predictions)[0, class_index_i]
+            class_i = index_to_class_name(class_index_i)
+            print("- '{}' with probability {:.3f}".format(class_i, probability_i))
+
+
+        # Find the predicted class for each image in the batch.
+        # predicted_classes = [index_to_class_name(int(max_index[batch])) for batch in range(predictions.shape[0])]
+        class_index = int(max_index[0])
+        predicted_class = index_to_class_name(class_index)
+        # print("Prediction: " + predicted_class + " with a certainty of " + str(max_value.item()))
+        print("Prediction: " + predicted_class)
+
+        return class_index, max_value.item()
+
+    else:
+        cert = predictions[0][expected_class_index].item()
+        # print("Certainty of " + str(cert))
+
+        return expected_class_index, cert
+
+
+def black_out(img, x_low, x_high, y_low, y_high):
+    img[0, :, x_low:x_high + 1, y_low:y_high + 1] = 0.
+    return img
+
+
+def highlight(img, x_low, x_high, y_low, y_high, grad):
+    img[0, 0, x_low:x_high + 1, y_low:y_high + 1] += grad
+    # img[0, 1:, x_low:x_high + 1, y_low:y_high + 1] = 0
+
+
+def predict_blacked_out(image, blocks, res_img, most_likely_index, certainty):
+    img = image.clone().detach()
+
+    for (x_block, y_block) in blocks:
+        x_lower = int((image.shape[2] + 1) / horizontal_resolution) * x_block
+        x_upper = int(((image.shape[2] + 1) / horizontal_resolution)) * (x_block + 1) - 1
+        y_lower = int((image.shape[3] + 1) / vertical_resolution) * y_block
+        y_upper = int(((image.shape[3] + 1) / vertical_resolution)) * (y_block + 1) - 1
+
+        black_out(img, x_lower, x_upper, y_lower, y_upper)
+
+    _, cert = predict_class(img, most_likely_index)
+
+    for (x_block, y_block) in blocks:
+        x_lower = int((image.shape[2] + 1) / horizontal_resolution) * x_block
+        x_upper = int(((image.shape[2] + 1) / horizontal_resolution)) * (x_block + 1) - 1
+        y_lower = int((image.shape[3] + 1) / vertical_resolution) * y_block
+        y_upper = int(((image.shape[3] + 1) / vertical_resolution)) * (y_block + 1) - 1
+
+        highlight(res_img, x_lower, x_upper, y_lower, y_upper, max(certainty - cert, 0.))
+
+
+def evaluate_explanation(image: torch.Tensor, explanation: torch.Tensor, resolution=4000):
+    image_copy = torch.tensor(image)
+    explanation_np: np.ndarray = explanation.cpu().numpy()
+    indices = np.unravel_index(np.argsort(-explanation_np[0][0], axis=None), explanation_np.shape[2:])
+
+    sorted_x, sorted_y = indices
+
+    scores = []
+
+    for i in range(len(sorted_x) // resolution + 1):
+        image_copy[0, 0:3, sorted_x[i*resolution:(i+1) * resolution], sorted_y[i*resolution:(i+1) * resolution]] = 0.
+        imshow(torchvision.utils.make_grid(image_copy))
+        _, score = predict_class(image_copy, most_likely_index)
+        scores.append(score)
+
+    plt.plot(np.array(scores))
+    plt.show()
+
+
 if __name__ == '__main__':
 
     # ==========
@@ -146,13 +282,13 @@ if __name__ == '__main__':
     # trainloader = torch.utils.data.DataLoader(trainset, batch_size=1,
     #                                           shuffle=True, num_workers=2)
 
-    # testset = torchvision.datasets.VOCDetection(root='./data', year='2012', image_set="val",
-    #                                             download=download_voc_dataset, transform=transform)
-    # testloader = torch.utils.data.DataLoader(testset, batch_size=1,
-    #                                          shuffle=False, num_workers=2)
+    testset = torchvision.datasets.VOCDetection(root='./data', year='2012', image_set="val",
+                                                download=download_voc_dataset, transform=transform)
+    testloader = torch.utils.data.DataLoader(testset, batch_size=1,
+                                             shuffle=False, num_workers=2)
 
-    customset = CustomDataset(voc_selection_dir, transform=transform)
-    customloader = torch.utils.data.DataLoader(customset, batch_size=1, shuffle=False, num_workers=2)
+    # customset = CustomDataset(voc_selection_dir, transform=transform)
+    # customloader = torch.utils.data.DataLoader(customset, batch_size=1, shuffle=False, num_workers=2)
 
     # Download the ImageNet class index if not yet present. The class index is used to map indices to their
     # corresponding class name.
@@ -185,103 +321,6 @@ if __name__ == '__main__':
     print("Current model: {}".format(str(model.__class__)))
     print()
 
-    # ===============
-    # == UTILITIES ==
-    # ===============
-    # Opposite of transforms.Normalize
-    def unnormalize(img):
-        img2 = []
-        for channel in range(img.shape[0]):
-            img2.append(img[channel] * img_normalize_std[channel] + img_normalize_mean[channel])
-        return torch.stack(img2)
-
-    # Function to show an image
-    def imshow(img, map=None):
-
-        img = unnormalize(img)
-
-        if map is None:
-            fig, ax1 = plt.subplots(1, 1, figsize=(15, 7))
-            ax1.imshow(np.transpose(img.cpu().numpy(), (1, 2, 0)))      # different shape conventions between matplotlib and pytorch
-        else:
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 7))
-            ax1.imshow(np.transpose(img.cpu().numpy(), (1, 2, 0)))
-
-            map_normalized = torch.zeros_like(map)
-            map_normalized[0] = (map[0] - torch.min(map[0])) / (torch.max(map[0]) - torch.min(map[0]))
-            # map_normalized = map / 50.
-            ax2.imshow(np.transpose(map_normalized.cpu().numpy(), (1, 2, 0)))
-
-        plt.show()
-
-
-    # Function to pretty print a (json) dictionary
-    pp = pprint.PrettyPrinter(indent=4)
-    def pprintdict(dic):
-        pp.pprint(dic)
-
-
-    # Function to map an index to its corresponding object class name
-    def index_to_class_name(index):
-        return class_map[str(index)][1]
-
-
-    def predict_class(img, expected_class_index):
-        # Send the image though the model to get the object prediction
-        predictions = model(torch.autograd.Variable(img))
-        # predictions:
-        # - Tensor of shape (batch_size, nb_of_classes)
-        # - The class with the highest value is the predicted class
-
-        if expected_class_index is None:
-            # Find the best prediction for each image in the batch
-            max_value, max_index = torch.max(predictions, dim=1)
-
-            # Find the predicted class for each image in the batch.
-            # predicted_classes = [index_to_class_name(int(max_index[batch])) for batch in range(predictions.shape[0])]
-            class_index = int(max_index[0])
-            predicted_class = index_to_class_name(class_index)
-            # print("Prediction: " + predicted_class + " with a certainty of " + str(max_value.item()))
-            print("Prediction: " + predicted_class)
-
-            return class_index, max_value.item()
-
-        else:
-            cert = predictions[0][expected_class_index].item()
-            # print("Certainty of " + str(cert))
-
-            return expected_class_index, cert
-
-    def black_out(img, x_low, x_high, y_low, y_high):
-        img[0, :, x_low:x_high + 1, y_low:y_high + 1] = 0.
-        return img
-
-
-    def highlight(img, x_low, x_high, y_low, y_high, grad):
-        img[0, 0, x_low:x_high + 1, y_low:y_high + 1] += grad
-        # img[0, 1:, x_low:x_high + 1, y_low:y_high + 1] = 0
-
-
-    def predict_blacked_out(image, blocks, res_img, most_likely_index, certainty):
-        img = image.clone().detach()
-
-        for (x_block, y_block) in blocks:
-            x_lower = int((image.shape[2] + 1) / horizontal_resolution) * x_block
-            x_upper = int(((image.shape[2] + 1) / horizontal_resolution)) * (x_block + 1) - 1
-            y_lower = int((image.shape[3] + 1) / vertical_resolution) * y_block
-            y_upper = int(((image.shape[3] + 1) / vertical_resolution)) * (y_block + 1) - 1
-
-            black_out(img, x_lower, x_upper, y_lower, y_upper)
-
-        _, cert = predict_class(img, most_likely_index)
-
-        for (x_block, y_block) in blocks:
-            x_lower = int((image.shape[2] + 1) / horizontal_resolution) * x_block
-            x_upper = int(((image.shape[2] + 1) / horizontal_resolution)) * (x_block + 1) - 1
-            y_lower = int((image.shape[3] + 1) / vertical_resolution) * y_block
-            y_upper = int(((image.shape[3] + 1) / vertical_resolution)) * (y_block + 1) - 1
-
-            highlight(res_img, x_lower, x_upper, y_lower, y_upper, max(certainty - cert, 0.))
 
     # =============================
     # == ACTUAL OBJECT DETECTION ==
@@ -289,7 +328,7 @@ if __name__ == '__main__':
     # Press q or close the image window to continue to the next image.
     #
     # The image- and label variables may be batches of images and labels. The batch size is defined in the DataLoader.
-    for i, (image, label) in enumerate(customloader):
+    for i, (image, label) in enumerate(testloader):
 
         print(" --- Image {} ---".format(i))
         if cuda:
@@ -331,7 +370,9 @@ if __name__ == '__main__':
         elif method == "rm":
             height, width = image.shape[2:]
             pbar = ProgressBar()
-            
+
+            imshow(torchvision.utils.make_grid(image))
+
             # Create masks with multiple resolutions
             for resolution in pbar(range(2, mask_max_resolution)):
 
@@ -352,9 +393,12 @@ if __name__ == '__main__':
                         mask_img = mask_img.cuda()
                     img_masked = image * mask_img
 
-                    # imshow(torchvision.utils.make_grid(img_masked))
-
                     _, mask_weight = predict_class(img_masked, most_likely_index)
+
+                    print("weight: {}".format(mask_weight))
+                    # imshow(torchvision.utils.make_grid(mask_img), do_unnormalize=False)
+                    #
+                    # imshow(torchvision.utils.make_grid(img_masked))
 
                     result_image = result_image + (mask_img * mask_weight)
 
@@ -364,5 +408,6 @@ if __name__ == '__main__':
                     # imshow(torchvision.utils.make_grid(img_masked), torchvision.utils.make_grid(result_image))
 
             imshow(torchvision.utils.make_grid(image), torchvision.utils.make_grid(result_image))
+            evaluate_explanation(image, result_image)
         else:
             print("No method '" + method + "' available.")
